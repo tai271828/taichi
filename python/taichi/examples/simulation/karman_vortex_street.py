@@ -2,9 +2,12 @@
 # Author : Wang (hietwll@gmail.com)
 # Original code at https://github.com/hietwll/LBM_Taichi
 
+import os
+
 import matplotlib
 import numpy as np
 from matplotlib import cm
+from PIL import Image
 
 import taichi as ti
 import taichi.math as tm
@@ -131,37 +134,42 @@ class lbm_solver:
         self.rho[ibc, jbc] = self.rho[inb, jnb]
         self.f_old[ibc, jbc] = self.f_eq(ibc, jbc) - self.f_eq(inb, jnb) + self.f_old[inb, jnb]
 
-    def solve(self):
-        gui = ti.GUI("Karman Vortex Street", (self.nx, 2 * self.ny))
+    def solve(self, total_steps=2000, gif_interval=50, output="karman.gif"):
         self.init()
-        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+        frames = []
+        colors = [
+            (1, 1, 0),
+            (0.953, 0.490, 0.016),
+            (0, 0, 0),
+            (0.176, 0.976, 0.529),
+            (0, 1, 1),
+        ]
+        my_cmap = matplotlib.colors.LinearSegmentedColormap.from_list("my_cmap", colors)
+
+        for step in range(total_steps):
             for _ in range(10):
                 self.collide_and_stream()
                 self.update_macro_var()
                 self.apply_bc()
 
-            ##  code fragment displaying vorticity is contributed by woclass
-            vel = self.vel.to_numpy()
-            ugrad = np.gradient(vel[:, :, 0])
-            vgrad = np.gradient(vel[:, :, 1])
-            vor = ugrad[1] - vgrad[0]
-            vel_mag = (vel[:, :, 0] ** 2.0 + vel[:, :, 1] ** 2.0) ** 0.5
-            ## color map
-            colors = [
-                (1, 1, 0),
-                (0.953, 0.490, 0.016),
-                (0, 0, 0),
-                (0.176, 0.976, 0.529),
-                (0, 1, 1),
-            ]
-            my_cmap = matplotlib.colors.LinearSegmentedColormap.from_list("my_cmap", colors)
-            vor_img = cm.ScalarMappable(norm=matplotlib.colors.Normalize(vmin=-0.02, vmax=0.02), cmap=my_cmap).to_rgba(
-                vor
-            )
-            vel_img = cm.plasma(vel_mag / 0.15)
-            img = np.concatenate((vor_img, vel_img), axis=1)
-            gui.set_image(img)
-            gui.show()
+            if step % gif_interval == 0:
+                vel = self.vel.to_numpy()
+                ugrad = np.gradient(vel[:, :, 0])
+                vgrad = np.gradient(vel[:, :, 1])
+                vor = ugrad[1] - vgrad[0]
+                vel_mag = (vel[:, :, 0] ** 2.0 + vel[:, :, 1] ** 2.0) ** 0.5
+                vor_img = cm.ScalarMappable(
+                    norm=matplotlib.colors.Normalize(vmin=-0.02, vmax=0.02), cmap=my_cmap
+                ).to_rgba(vor)
+                vel_img = cm.plasma(vel_mag / 0.15)
+                img = np.concatenate((vor_img, vel_img), axis=1)
+                frame = Image.fromarray((img[:, :, :3] * 255).astype(np.uint8))
+                frames.append(frame)
+                print(f"Step {step}/{total_steps}, captured frame {len(frames)}")
+
+        if frames:
+            frames[0].save(output, save_all=True, append_images=frames[1:], loop=0, duration=100)
+            print(f"Saved {len(frames)} frames to {output}")
 
 
 if __name__ == "__main__":
