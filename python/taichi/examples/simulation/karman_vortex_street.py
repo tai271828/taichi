@@ -7,7 +7,7 @@ import os
 import matplotlib
 import numpy as np
 from matplotlib import cm
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 import taichi as ti
 import taichi.math as tm
@@ -29,11 +29,19 @@ class lbm_solver:
         bc_value,  # if bc_type = 0, we need to specify the velocity in bc_value
         cy=0,  # whether to place a cylindrical obstacle
         cy_para=[0.0, 0.0, 0.0],  # location and radius of the cylinder
+        D_physical=0.1,  # physical cylinder diameter in meters
+        U_physical=1.0,  # physical inlet velocity in m/s
     ):
         self.nx = nx  # by convention, dx = dy = dt = 1.0 (lattice units)
         self.ny = ny
         self.niu = niu
         self.tau = 3.0 * niu + 0.5
+
+        # Lattice-to-SI conversion
+        D_lattice = 2.0 * cy_para[2]  # cylinder diameter in lattice units
+        U_lattice = bc_value[0][0]  # inlet velocity in lattice units
+        self.dx = D_physical / D_lattice  # meters per lattice cell
+        self.dt_physical = U_lattice / U_physical * self.dx  # seconds per lattice time step
         self.inv_tau = 1.0 / self.tau
         self.rho = ti.field(float, shape=(nx, ny))
         self.vel = ti.Vector.field(2, float, shape=(nx, ny))
@@ -137,6 +145,7 @@ class lbm_solver:
     def solve(self, total_steps=2000, gif_interval=50, output="karman.gif"):
         self.init()
         frames = []
+        substeps_per_step = 10
         colors = [
             (1, 1, 0),
             (0.953, 0.490, 0.016),
@@ -146,13 +155,19 @@ class lbm_solver:
         ]
         my_cmap = matplotlib.colors.LinearSegmentedColormap.from_list("my_cmap", colors)
 
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+        except (IOError, OSError):
+            font = ImageFont.load_default()
+
         for step in range(total_steps):
-            for _ in range(10):
+            for _ in range(substeps_per_step):
                 self.collide_and_stream()
                 self.update_macro_var()
                 self.apply_bc()
 
             if step % gif_interval == 0:
+                t_si = (step + 1) * substeps_per_step * self.dt_physical
                 vel = self.vel.to_numpy()
                 ugrad = np.gradient(vel[:, :, 0])
                 vgrad = np.gradient(vel[:, :, 1])
@@ -164,8 +179,10 @@ class lbm_solver:
                 vel_img = cm.plasma(vel_mag / 0.15)
                 img = np.concatenate((vor_img, vel_img), axis=1)
                 frame = Image.fromarray((img[:, :, :3] * 255).astype(np.uint8))
+                draw = ImageDraw.Draw(frame)
+                draw.text((10, 10), f"t = {t_si:.4f} s", fill=(255, 255, 255), font=font)
                 frames.append(frame)
-                print(f"Step {step}/{total_steps}, captured frame {len(frames)}")
+                print(f"Step {step}/{total_steps}, t = {t_si:.4f} s, captured frame {len(frames)}")
 
         if frames:
             frames[0].save(output, save_all=True, append_images=frames[1:], loop=0, duration=100)
